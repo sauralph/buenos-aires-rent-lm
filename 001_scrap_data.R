@@ -1,14 +1,26 @@
+# Load Libraries ----------------------------------------------------------
+
 rm(list = ls())
 library(rvest)
 library(stringr)
+
+
+
+# Set Remote end-point ----------------------------------------------------
+
+
 simple <- read_html("https://www.argenprop.com/departamento-venta-barrio-br-norte")
+exchange_rate <- 200
+
+
+# Auxiliary Functions -----------------------------------------------------
 
 
 
-extraerDatos = function(nodo){
-  Y = nodo %>% html_nodes("p.card__price") %>% html_text() 
+extractData = function(node){
+  Y = node %>% html_nodes("p.card__price") %>% html_text() 
   Y = str_trim(gsub("\\r\\n","",Y))  #card__common-data
-  predictores = nodo %>% html_nodes("ul.card__main-features") 
+  predictores = node %>% html_nodes("ul.card__main-features") 
   
   X = rep(NA,length(Y))
   
@@ -19,37 +31,48 @@ extraerDatos = function(nodo){
   return(data.frame(X,Y))
 }
 
-proximaPagina = function(nodo){
-  paste0("https://www.argenprop.com",nodo %>% html_nodes(".pagination__page-next.pagination__page>a") %>% html_attr("href"))
+nextPage = function(node){
+  paste0("https://www.argenprop.com",node %>% html_nodes(".pagination__page-next.pagination__page>a") %>% html_attr("href"))
 }
 
 
-out = extraerDatos(simple)
-nodo = read_html(proximaPagina(simple))
-out = rbind(out,extraerDatos(nodo))
+# First Extraction --------------------------------------------------------
 
-for (i in 1:366) {
-  print(paste0("Trayendo Pagina:",proximaPagina(nodo)))
-  nodo = read_html(proximaPagina(nodo))
-  out = rbind(out,extraerDatos(nodo))
+
+out = extractData(simple)
+node = read_html(nextPage(simple))
+out = rbind(out,extractData(node))
+
+last_page = simple %>% html_nodes(".pagination__page") %>% html_text()
+last_page = as.integer(last_page[length(last_page)-1])
+
+
+# Extraction loop ---------------------------------------------------------
+
+
+for (i in seq(1,last_page)) {
+  print(paste0("Downloding Page: ",nextPage(node)))
+  node = read_html(nextPage(node))
+  out = rbind(out,extractData(node))
   Sys.sleep(1)
 }
 
 
 dim(out)
+head(out)
 
-out$moneda=ifelse(str_detect(out$Y,pattern = "USD"),"USD","ARS")
-table(out$moneda)
-out$importe = as.numeric(str_replace_all(out$Y,"[^\\d]",""))
-out$importe[out$moneda=="USD"]*200
-mean(out$importe[out$moneda=="ARS"],na.rm = T)
-out$importe_normalizado = ifelse(str_detect(out$Y,pattern = "USD"),
-                                 out$importe * 200,
-                                 out$importe
+out$currency=ifelse(str_detect(out$Y,pattern = "USD"),"USD","ARS")
+table(out$currency)
+out$amount = as.numeric(str_replace_all(out$Y,"[^\\d]",""))
+out$amount[out$currency=="USD"]*exchange_rate
+mean(out$amount[out$currency=="ARS"],na.rm = T)
+out$amount_normalized = ifelse(str_detect(out$Y,pattern = "USD"),
+                                 out$amount * 200,
+                                 out$amount
 )
-boxplot(importe_normalizado~moneda,data=out,outline=F)
+boxplot(amount_normalized~currency,data=out,outline=F)
 
-extraerCaracteristica = function(X,pattern){
+parseCharacteristics = function(X,pattern){
   unlist(lapply(str_split(X,pattern = "\\|"),function(x){
     posicion = str_detect(x,pattern)
     if(sum(posicion)>0){
@@ -60,21 +83,15 @@ extraerCaracteristica = function(X,pattern){
   }))
 }
 
-out$m2 = extraerCaracteristica(out$X,"m²")
-out$dormitorios = extraerCaracteristica(out$X,"dormitorio")
-head(out$X)
-out$baño = extraerCaracteristica(out$X,"baño")
-head(out$X)
-out$antiguedad = extraerCaracteristica(out$X,"año")
-out$interno = str_detect(out$X,"Interno")
-out$contrafrente = str_detect(out$X,"Contrafrente")
-out$monoambiente = str_detect(out$X,"Monoambiente")
-out$ap = str_detect(out$X,"Apto Profesional")
+out$m2 = parseCharacteristics(out$X,"m²")
+out$dorms = parseCharacteristics(out$X,"dorm")
+out$bath = parseCharacteristics(out$X,"baño")
+out$age = parseCharacteristics(out$X,"año")
+#out$interno = table(str_detect(out$X,"Int"))
+out$backside = str_detect(out$X,"Contra")
+out$loft = str_detect(out$X,"Monoam")
+out$office = str_detect(out$X,"Apto P")
 
 summary(out)
-out$X
-ventas = out[,c(-1,-2)]
-nodo
-
-saveRDS(ventas,"ventas2.RDS")
-
+#out$X
+write.csv(out[,c(-1,-2)],"HouseMarket.csv")
